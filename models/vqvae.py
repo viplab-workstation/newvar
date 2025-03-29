@@ -48,10 +48,11 @@ class VQVAE(nn.Module):
         )
         self.quant_conv = torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks//2)
         if in_channels == 1:
-            self.post_quant_conv = torch.nn.ModuleList([
-                torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks // 2),
-                torch.nn.Sigmoid()
-            ])
+            self.post_quant_conv = torch.nn.Identity()
+            # self.post_quant_conv = torch.nn.Sequential(
+            #     torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks // 2),
+            #     torch.nn.Sigmoid()
+            # )
         else:
             self.post_quant_conv = torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks // 2)
         

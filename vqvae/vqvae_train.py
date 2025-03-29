@@ -2,10 +2,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+import sys
+sys.path.append("../")
+
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from models.vqvae import VQVAE
-
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from vqvae_utils import DiceLoss, PerceptualLoss, score, SingleImageDataset
@@ -50,7 +52,7 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
             rec_img, _, vq_loss = vqvae(img)
 
             if task == "image": loss = l1loss(rec_img, img) + 0.5 * vq_loss
-            else: loss = 0.5 * dice_loss(rec_img, img) + 0.5 * perceptual_loss(rec_img, img) + 0.5 * vq_loss
+            else: loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img) + 0.5 * vq_loss
 
             loss.backward()
             optimizer.step()
@@ -70,9 +72,8 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
                 rec_img, _, _ = vqvae(img)
 
                 if task == "image": loss = l1loss(rec_img, img)
-                else: loss = 0.5 * dice_loss(rec_img, img) + 0.5 * perceptual_loss(rec_img, img)
+                else: loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img)
 
-                loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img)
                 val_loss += loss.item()
                 val_score += score(rec_img.cpu().detach(), img.cpu().detach(),False)
 
@@ -88,12 +89,12 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
             best_val_loss = avg_val_loss
             torch.save(vqvae.state_dict(), os.path.join(save_path, "vqvae_best.pth"))
 
-        if epoch % 3 == 0:  # Log every 3 epochs
-            writer.add_images("Images/Original", img[:3], epoch)
-            writer.add_images("Images/Reconstructed", torch.sigmoid(rec_img[:3]), epoch)
+        if epoch % 1 == 0:  # Log every 1 epochs
+            writer.add_images("Images/Original", img[:5], epoch)
+            writer.add_images("Images/Reconstructed", rec_img[:5], epoch)
 
-        print(f"Epoch {epoch+1}, Train Loss: {total_loss/len(train_loader):.4f}, Dice: {total_score/len(train_loader):.4f}, "
-              f"Val Loss: {avg_val_loss:.4f}, Val Dice: {val_score/len(val_loader):.4f}")
+        print(f"Epoch {epoch+1}, Train Loss: {total_loss/len(train_loader):.4f}, Accuracy: {total_score/len(train_loader):.4f}, "
+              f"Val Loss: {avg_val_loss:.4f}, Val accuracy: {val_score/len(val_loader):.4f}")
 
     writer.close()
     print("Training Complete!")
@@ -106,8 +107,8 @@ if __name__ == "__main__":
         transforms.ToTensor()
     ])
 
-    train_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Training_Input/", transform=transform)
-    val_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Validation_Input/", transform=transform)
+    train_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Training_Input/", task="image", transform=transform)
+    val_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Validation_Input/", task="image", transform=transform)
 
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
@@ -115,4 +116,5 @@ if __name__ == "__main__":
     #4096model : vocab_size=4096, z_channels=32, loss : dice + focal + vq
     #8192model : vocab_size=8192, z_channels=64, loss : dice + perceptual + 0.5*vq
     vqvae = VQVAE(in_channels=3, vocab_size=8192, z_channels=64, ch=128, test_mode=False)
+    vqvae.load_state_dict(torch.load("checkpoints/img_new_best.pth"))
     train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", save_path="./checkpoints")

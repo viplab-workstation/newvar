@@ -7,8 +7,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 
 from sklearn.metrics import confusion_matrix
-from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-
+from skimage.metrics import structural_similarity as SSIM, peak_signal_noise_ratio as PSNR
 
 # Dice Loss
 class DiceLoss(nn.Module):
@@ -60,10 +59,10 @@ class PerceptualLoss(nn.Module):
         return loss
     
 def score(y_pred, y_true, all_metrics=False):
-    if y_pred.shape[1] == 1:
-        y_pred = np.array(y_pred)
-        y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_true = np.array(y_true)
 
+    if y_pred.shape[1] == 1:
         y_pred = (y_pred > 0.5).astype(int)  # Ensure binary labels (0 or 1)
         y_true = y_true.astype(int)  # Ensure binary labels (0 or 1)
 
@@ -80,15 +79,24 @@ def score(y_pred, y_true, all_metrics=False):
         if all_metrics: return np.array([accuracy, sensitivity, specificity, f1_or_dsc, jaccard, miou])
         return f1_or_dsc
     else:
-        psnr = PeakSignalNoiseRatio()(y_pred, y_true)
-        ssim = StructuralSimilarityIndexMeasure()(y_pred, y_true)
-        if all_metrics: return np.array([psnr, ssim])
-        return psnr
+        B = y_true.shape[0]
+        psnrs = []
+        ssims = []
+        
+        for i in range(B):
+            y_t, y_p = y_true[i].transpose(1,2,0), y_pred[i].transpose(1,2,0)
+            psnr = PSNR(y_t, y_p, data_range=1)
+            ssim = SSIM(y_t, y_p, data_range=1, multichannel=True,  channel_axis=2, win_size=7)
+            psnrs.append(psnr)
+            ssims.append(ssim)
+
+        if all_metrics: return np.array([np.sum(psnrs), np.sum(ssims)])
+        return np.sum(psnrs)
 
 # Dataset
 class SingleImageDataset(Dataset):
     def __init__(self, root_dir, task="image", transform=None):
-        self.ch = ch
+        self.task = task
         self.root_dir = root_dir
         self.image_files = sorted([f for f in os.listdir(root_dir) if f.endswith(('.png', '.jpg', '.jpeg'))])
         self.transform = transform
@@ -111,10 +119,12 @@ def display_results(image_pairs, save_path="test_results.png"):
     cols, rows = 2, num_images  # 8x2 layout
     img_width, img_height = image_pairs[0][0].size
 
-    grid_img = Image.new("L", (cols * img_width, rows * img_height), color=255)
+    grid_img = Image.new("RGB", (cols * img_width, rows * img_height), color=255)
     draw = ImageDraw.Draw(grid_img)
 
     for i, (orig, recon) in enumerate(image_pairs):
+        orig = orig.convert("RGB")
+        recon = recon.convert("RGB")
         grid_img.paste(orig, (0, i * img_height))  # Left column: Original
         grid_img.paste(recon, (img_width, i * img_height))  # Right column: Reconstructed
 
@@ -123,3 +133,8 @@ def display_results(image_pairs, save_path="test_results.png"):
 
     grid_img.save(save_path)
     print(f"Results saved at {save_path}")
+
+if __name__ == "__main__":
+    i1 = np.random.rand(1,3,256, 256)
+    i2 = np.random.rand(1,3,256, 256)
+    print(score(i1,i2,True))

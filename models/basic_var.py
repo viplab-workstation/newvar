@@ -172,3 +172,104 @@ class AdaLNBeforeHead(nn.Module):
     def forward(self, x_BLC: torch.Tensor, cond_BD: torch.Tensor):
         scale, shift = self.ada_lin(cond_BD).view(-1, 1, 2, self.C).unbind(2)
         return self.ln_wo_grad(x_BLC).mul(scale.add(1)).add_(shift)
+
+class CrossAttention(nn.Module):
+    def __init__(
+        self, block_idx, dim=1024, num_heads=16, proj_drop=0., attn_l2_norm=False, flash_if_available=True,
+    ):
+        super(CrossAttention, self).__init__()
+
+        self.attn_l2_norm = attn_l2_norm
+        self.block_idx, self.num_heads, self.head_dim = block_idx, num_heads, dim // num_heads
+        self.scale = 0.25 / math.sqrt(self.head_dim)
+        self.using_flash = flash_if_available and flash_attn_func is not None
+        self.using_xform = flash_if_available and memory_efficient_attention is not None        
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop, inplace=True) if proj_drop > 0 else nn.Identity()
+
+        if self.attn_l2_norm:
+            self.scale = 1
+            self.scale_mul_1H11 = nn.Parameter(torch.full(size=(1, self.num_heads, 1, 1), fill_value=4.0).log(), requires_grad=True)
+            self.max_scale_mul = torch.log(torch.tensor(100)).item()
+        else:
+            self.scale = 0.25 / math.sqrt(self.head_dim)
+
+        self.mat_q = nn.Linear(dim, dim, bias=False)
+        self.mat_kv = nn.Linear(dim, dim * 2, bias=False)
+        self.q_bias, self.v_bias = nn.Parameter(torch.zeros(dim)), nn.Parameter(torch.zeros(dim))
+        self.register_buffer('zero_k_bias', torch.zeros(dim))
+
+
+    def forward(self, f_d, f_var,attn_bias=None):
+        B, L, C = f_d.shape
+        f_q = F.linear(input=f_d, weight=self.mat_q.weight, bias=self.q_bias).view(B, L, 1, self.num_heads, self.head_dim)
+        f_kv = F.linear(input=f_var, weight=self.mat_kv.weight, bias=torch.cat((self.zero_k_bias, self.v_bias))).view(B, L, 2, self.num_heads, self.head_dim)
+        main_type = f_kv.dtype
+
+        q = f_q.permute(2, 0, 3, 1, 4)
+        k, v = f_kv.permute(2, 0, 3, 1, 4).unbind(dim=0); dim_cat = 2 
+
+        dropout_p = 0.0
+        using_flash = self.using_flash and attn_bias is None and f_kv.dtype != torch.float32
+        if self.attn_l2_norm:
+            scale_mul = self.scale_mul_1H11.clamp_max(self.max_scale_mul).exp()
+            if using_flash or self.using_xform: scale_mul = scale_mul.transpose(1, 2)  # 1H11 to 11H1
+            q = F.normalize(q, dim=-1).mul(scale_mul)
+            k = F.normalize(k, dim=-1)
+
+        if using_flash:
+            oup = flash_attn_func(q.to(dtype=main_type), k.to(dtype=main_type), v.to(dtype=main_type), dropout_p=dropout_p, softmax_scale=self.scale).view(B, L, C)
+        elif self.using_xform:
+            oup = memory_efficient_attention(q.to(dtype=main_type), k.to(dtype=main_type), v.to(dtype=main_type), attn_bias=None if attn_bias is None else attn_bias.to(dtype=main_type).expand(B, self.num_heads, -1, -1), p=dropout_p, scale=self.scale).view(B, L, C)
+        else:
+            oup = slow_attn(query=q, key=k, value=v, scale=self.scale, attn_mask=attn_bias, dropout_p=dropout_p).transpose(1, 2).reshape(B, L, C)
+        
+        return self.proj_drop(self.proj(oup))
+
+    def extra_repr(self) -> str:
+        return f'using_flash={self.using_flash}, using_xform={self.using_xform}, attn_l2_norm={self.attn_l2_norm}'
+    
+class AdaLNCrossAttn(nn.Module):
+    def __init__(
+        self, block_idx, last_drop_p, embed_dim, shared_aln: bool, norm_layer,
+        num_heads, mlp_ratio=4., drop=0., attn_drop=0., drop_path=0., attn_l2_norm=False,
+        flash_if_available=False, fused_if_available=True,
+    ):
+        super().__init__()
+        self.block_idx, self.last_drop_p, self.C = block_idx, last_drop_p, embed_dim
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.attn = CrossAttention(block_idx=block_idx, dim=embed_dim, num_heads=num_heads, proj_drop=drop, attn_l2_norm=attn_l2_norm, flash_if_available=flash_if_available)
+        self.ffn = FFN(in_features=embed_dim, hidden_features=round(embed_dim * mlp_ratio), drop=drop, fused_if_available=fused_if_available)
+        
+        self.ln_wo_grad = norm_layer(embed_dim, elementwise_affine=False)
+        self.shared_aln = shared_aln
+
+        if self.shared_aln:
+            self.ada_gss = nn.Parameter(torch.randn(1, 1, 6, embed_dim) / embed_dim**0.5)
+        else:
+            self.ada_lin = nn.Sequential(nn.SiLU(inplace=False), nn.Linear(embed_dim, 6 * embed_dim))
+        
+        self.fused_add_norm_fn = None
+
+    def forward(self, x, f, attn_bias=None):  
+        if self.shared_aln:
+            gamma1, gamma2, scale1, scale2, shift1, shift2 = self.ada_gss.unbind(dim=2)
+        else:
+            ada_out = self.ada_lin(x)  # Ensure correct shape: (batch, seq, 6 * embed_dim)
+            ada_out = ada_out.view(*ada_out.shape[:-1], 6, self.C)  # (batch, seq, 6, embed_dim)
+            gamma1, gamma2, scale1, scale2, shift1, shift2 = ada_out.unbind(dim=2)
+        
+        # **Cross-Attention: q from x, k/v from f**
+        x = x + self.drop_path(
+            self.attn(
+                self.ln_wo_grad(x) * (scale1 + 1) + shift1,  
+                self.ln_wo_grad(f),
+                attn_bias=attn_bias
+            ) * gamma1
+        )
+
+        # **FFN with Adaptive Scaling**
+        x = x + self.drop_path(
+            self.ffn(self.ln_wo_grad(x) * (scale2 + 1) + shift2) * gamma2
+        )
+        return x

@@ -223,4 +223,8 @@ class Decoder(nn.Module):
         
         # end
         h = self.conv_out(F.silu(self.norm_out(h), inplace=True))
+
+        if self.in_channels == 1:
+            h = torch.sigmoid(h)
+            
         return h
