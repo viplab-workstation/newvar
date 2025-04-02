@@ -31,8 +31,11 @@ def test_var(test_loader, indices=None):
         depth=16, shared_aln=False,
     )
     vae_img.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/vqvae_best.pth", map_location=device))
-    vae_mask.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/mask_noconv.pth", map_location=device))
-    
+    # vae_mask.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/mask_best.pth", map_location=device))
+    ckpt = torch.load("/home/viplab/SuperRes/newvar/local_output/ar-ckpt-last.pth", map_location=device)
+    var.load_state_dict(ckpt['trainer']['var_wo_ddp'])
+    vae_mask.load_state_dict(ckpt['trainer']['vae_local'])
+
     selected_images = []
     
     with torch.no_grad():
@@ -64,6 +67,6 @@ if __name__ == "__main__":
     test_loader = DataLoader(image_dataset, batch_size=1, shuffle=False)  # Load one image at a time
 
     # Set indices of test images to evaluate (or None for sequential images)
-    test_indices = [0, 5, 10, 18, 20, 25, 30, 40]  # Example indices (max 8)
+    test_indices = [0, 5, ]#10, 18, 20, 25, 30, 40]  # Example indices (max 8)
 
     test_var(test_loader, indices=test_indices)
