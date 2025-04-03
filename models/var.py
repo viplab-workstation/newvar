@@ -7,7 +7,7 @@ import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
 import dist
-from models.basic_var import AdaLNSelfAttn, AdaLNCrossAttn
+from models.basic_var import CrossAttention, AdaLNCrossAttn
 from models.helpers import gumbel_softmax_with_rng, sample_with_top_k_top_p_
 from models.vqvae import VQVAE, VectorQuantizer2
 
@@ -84,24 +84,28 @@ class VAR(nn.Module):
         self.drop_path_rate = drop_path_rate
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule (linearly increasing)
         self.blocks = nn.ModuleList([
-            AdaLNCrossAttn(
-                shared_aln=shared_aln,
-                block_idx=block_idx, embed_dim=self.C, norm_layer=norm_layer, num_heads=num_heads, mlp_ratio=mlp_ratio,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[block_idx], last_drop_p=0 if block_idx == 0 else dpr[block_idx-1],
-                attn_l2_norm=attn_l2_norm,
-                flash_if_available=flash_if_available, fused_if_available=fused_if_available,
+            # AdaLNCrossAttn(
+            #     shared_aln=shared_aln,
+            #     block_idx=block_idx, embed_dim=self.C, norm_layer=norm_layer, num_heads=num_heads, mlp_ratio=mlp_ratio,
+            #     drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[block_idx], last_drop_p=0 if block_idx == 0 else dpr[block_idx-1],
+            #     attn_l2_norm=attn_l2_norm,
+            #     flash_if_available=flash_if_available, fused_if_available=fused_if_available,
+            # )
+            CrossAttention(
+                block_idx = block_idx, dim = self.C, num_heads = num_heads, 
+                flash_if_available=flash_if_available,
             )
             for block_idx in range(depth)
         ])
         
-        fused_add_norm_fns = [b.fused_add_norm_fn is not None for b in self.blocks]
-        self.using_fused_add_norm_fn = any(fused_add_norm_fns)
-        print(
-            f'\n[constructor]  ==== flash_if_available={flash_if_available} ({sum(b.attn.using_flash for b in self.blocks)}/{self.depth}), fused_if_available={fused_if_available} (fusing_add_ln={sum(fused_add_norm_fns)}/{self.depth}, fusing_mlp={sum(b.ffn.fused_mlp_func is not None for b in self.blocks)}/{self.depth}) ==== \n'
-            f'    [VAR config ] embed_dim={embed_dim}, num_heads={num_heads}, depth={depth}, mlp_ratio={mlp_ratio}\n'
-            f'    [drop ratios ] drop_rate={drop_rate}, attn_drop_rate={attn_drop_rate}, drop_path_rate={drop_path_rate:g} ({torch.linspace(0, drop_path_rate, depth)})',
-            end='\n\n', flush=True
-        )
+        # fused_add_norm_fns = [b.fused_add_norm_fn is not None for b in self.blocks]
+        # self.using_fused_add_norm_fn = any(fused_add_norm_fns)
+        # print(
+        #     f'\n[constructor]  ==== flash_if_available={flash_if_available} ({sum(b.attn.using_flash for b in self.blocks)}/{self.depth}), fused_if_available={fused_if_available} (fusing_add_ln={sum(fused_add_norm_fns)}/{self.depth}, fusing_mlp={sum(b.ffn.fused_mlp_func is not None for b in self.blocks)}/{self.depth}) ==== \n'
+        #     f'    [VAR config ] embed_dim={embed_dim}, num_heads={num_heads}, depth={depth}, mlp_ratio={mlp_ratio}\n'
+        #     f'    [drop ratios ] drop_rate={drop_rate}, attn_drop_rate={attn_drop_rate}, drop_path_rate={drop_path_rate:g} ({torch.linspace(0, drop_path_rate, depth)})',
+        #     end='\n\n', flush=True
+        # )
         
         # 5. attention mask used in training (for masking out the future)
         #    it won't be used in inference, since kv cache is enabled
@@ -154,14 +158,15 @@ class VAR(nn.Module):
             
             x = next_token_map
             it = self.word_embed_img(self.vae_quant_proxy_img[0].embedding(img_tokens[si]))
-            # print(x.shape, it.shape)
+            if(len(img_tokens[si][0]) <= 20):print("image:",img_tokens[si][0])
             AdaLNCrossAttn.forward
             for b in self.blocks:
-                x = b(x=x, f=it, attn_bias=None)
+                x = b(f_d=x, f_var=it, attn_bias=None)
             logits_BlV = self.get_logits(x)
             
             # idx_Bl = sample_with_top_k_top_p_(logits_BlV, rng=rng, top_k=top_k, top_p=top_p, num_samples=1)[:, :, 0]
             idx_Bl = logits_BlV.argmax(dim=-1) # making prediction deterministic instead of one from top k
+            if(len(idx_Bl[0]) <= 20): print("mask:",idx_Bl[0])
 
             if not more_smooth: # this is the default case
                 h_BChw = self.vae_quant_proxy_mask[0].embedding(idx_Bl)   # B, l, Cvae
@@ -207,7 +212,7 @@ class VAR(nn.Module):
         
         AdaLNCrossAttn.forward
         for i, b in enumerate(self.blocks):
-            x_BLC = b(x=x_BLC, f=img_tokens, attn_bias=attn_bias)
+            x_BLC = b(f_d=x_BLC, f_var=img_tokens, attn_bias=attn_bias)
         x_BLC = self.get_logits(x_BLC.float())
         
         if self.prog_si == 0:
@@ -256,22 +261,22 @@ class VAR(nn.Module):
         #     if hasattr(self.head_nm.ada_lin[-1], 'bias') and self.head_nm.ada_lin[-1].bias is not None:
         #         self.head_nm.ada_lin[-1].bias.data.zero_()
         
-        depth = len(self.blocks)
-        for block_idx, sab in enumerate(self.blocks):
-            sab: AdaLNCrossAttn
-            sab.attn.proj.weight.data.div_(math.sqrt(2 * depth))
-            sab.ffn.fc2.weight.data.div_(math.sqrt(2 * depth))
-            if hasattr(sab.ffn, 'fcg') and sab.ffn.fcg is not None:
-                nn.init.ones_(sab.ffn.fcg.bias)
-                nn.init.trunc_normal_(sab.ffn.fcg.weight, std=1e-5)
-            if hasattr(sab, 'ada_lin'):
-                sab.ada_lin[-1].weight.data[2*self.C:].mul_(init_adaln)
-                sab.ada_lin[-1].weight.data[:2*self.C].mul_(init_adaln_gamma)
-                if hasattr(sab.ada_lin[-1], 'bias') and sab.ada_lin[-1].bias is not None:
-                    sab.ada_lin[-1].bias.data.zero_()
-            elif hasattr(sab, 'ada_gss'):
-                sab.ada_gss.data[:, :, 2:].mul_(init_adaln)
-                sab.ada_gss.data[:, :, :2].mul_(init_adaln_gamma)
+        # depth = len(self.blocks)
+        # for block_idx, sab in enumerate(self.blocks):
+        #     sab: AdaLNCrossAttn
+        #     sab.attn.proj.weight.data.div_(math.sqrt(2 * depth))
+        #     sab.ffn.fc2.weight.data.div_(math.sqrt(2 * depth))
+        #     if hasattr(sab.ffn, 'fcg') and sab.ffn.fcg is not None:
+        #         nn.init.ones_(sab.ffn.fcg.bias)
+        #         nn.init.trunc_normal_(sab.ffn.fcg.weight, std=1e-5)
+        #     if hasattr(sab, 'ada_lin'):
+        #         sab.ada_lin[-1].weight.data[2*self.C:].mul_(init_adaln)
+        #         sab.ada_lin[-1].weight.data[:2*self.C].mul_(init_adaln_gamma)
+        #         if hasattr(sab.ada_lin[-1], 'bias') and sab.ada_lin[-1].bias is not None:
+        #             sab.ada_lin[-1].bias.data.zero_()
+        #     elif hasattr(sab, 'ada_gss'):
+        #         sab.ada_gss.data[:, :, 2:].mul_(init_adaln)
+        #         sab.ada_gss.data[:, :, :2].mul_(init_adaln_gamma)
     
     def extra_repr(self):
         return f'drop_path_rate={self.drop_path_rate:g}'

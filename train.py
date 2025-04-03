@@ -2,14 +2,17 @@ import gc
 import os
 import shutil
 import sys
+sys.path.append("../")
+
 import time
 import warnings
 from functools import partial
 
 import torch
 from torch.utils.data import DataLoader
-
+import torch.distributed as tdist
 import dist
+
 from utils import arg_util, misc
 from utils.data import build_dataset
 from utils.data_sampler import DistInfiniteBatchSampler, EvalDistributedSampler
@@ -39,8 +42,8 @@ def build_everything(args: arg_util.Args):
     # build data
     if not args.local_debug:
         print(f'[build PT data] ...\n')
-        num_classes, dataset_train, dataset_val = build_dataset(
-            args.data_path, final_reso=args.data_load_reso, hflip=args.hflip, mid_reso=args.mid_reso,
+        dataset_train, dataset_val = build_dataset(
+            args.data_path, final_reso=args.data_load_reso,
         )
         types = str((type(dataset_train).__name__, type(dataset_val).__name__))
         
@@ -82,20 +85,22 @@ def build_everything(args: arg_util.Args):
     from utils.amp_sc import AmpOptimizer
     from utils.lr_control import filter_params
     
-    vae_local, var_wo_ddp = build_vae_var(
-        V=4096, Cvae=32, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+    vae_img, vae_local, var_wo_ddp = build_vae_var(
+        V=8192, Cvae=64, ch=128, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         device=dist.get_device(), patch_nums=args.patch_nums,
-        num_classes=num_classes, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
+        depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
         flash_if_available=args.fuse, fused_if_available=args.fuse,
         init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
     )
     
-    vae_ckpt = 'vae_ch160v4096z32.pth'
+    vae_image_ckpt = "/home/viplab/SuperRes/newvar/vqvae/checkpoints/vqvae_best.pth"
+    vae_ckpt = '/home/viplab/SuperRes/newvar/vqvae/checkpoints/mask_best.pth'
     if dist.is_local_master():
         if not os.path.exists(vae_ckpt):
             os.system(f'wget https://huggingface.co/FoundationVision/var/resolve/main/{vae_ckpt}')
     dist.barrier()
     vae_local.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+    vae_img.load_state_dict(torch.load(vae_image_ckpt, map_location='cpu'), strict=True)
     
     vae_local: VQVAE = args.compile_model(vae_local, args.vfast)
     var_wo_ddp: VAR = args.compile_model(var_wo_ddp, args.tfast)
@@ -269,13 +274,13 @@ def train_one_ep(ep: int, is_first_ep: bool, start_it: int, args: arg_util.Args,
         warnings.filterwarnings('ignore', category=UserWarning)
     g_it, max_it = ep * iters_train, args.ep * iters_train
     
-    for it, (inp, label) in me.log_every(start_it, iters_train, ld_or_itrt, 30 if iters_train > 8000 else 5, header):
+    for it, (inp, mask) in me.log_every(start_it, iters_train, ld_or_itrt, 30 if iters_train > 8000 else 5, header):
         g_it = ep * iters_train + it
         if it < start_it: continue
         if is_first_ep and it == start_it: warnings.resetwarnings()
         
         inp = inp.to(args.device, non_blocking=True)
-        label = label.to(args.device, non_blocking=True)
+        mask = mask.to(args.device, non_blocking=True)
         
         args.cur_it = f'{it+1}/{iters_train}'
         
@@ -298,7 +303,7 @@ def train_one_ep(ep: int, is_first_ep: bool, start_it: int, args: arg_util.Args,
         
         grad_norm, scale_log2 = trainer.train_step(
             it=it, g_it=g_it, stepping=stepping, metric_lg=me, tb_lg=tb_lg,
-            inp_B3HW=inp, label_B=label, prog_si=prog_si, prog_wp_it=args.pgwp * iters_train,
+            inp_B3HW=inp, mask_B1HW=mask, prog_si=prog_si, prog_wp_it=args.pgwp * iters_train,
         )
         
         me.update(tlr=max_tlr)
@@ -328,6 +333,13 @@ class NullDDP(torch.nn.Module):
 
 
 if __name__ == '__main__':
+    os.environ["MASTER_ADDR"] = "127.0.0.1"  # Change if running on multiple nodes
+    os.environ["MASTER_PORT"] = "29502"  # Choose an available port
+    os.environ["WORLD_SIZE"] = "1"  # Set to the number of processes (GPUs
+    os.environ["RANK"] = "0"  # Unique rank of the process
+    tdist.init_process_group(backend="nccl", init_method="env://")
+    print("World Size:", dist.get_world_size())
+
     try: main_training()
     finally:
         dist.finalize()

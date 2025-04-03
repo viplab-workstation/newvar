@@ -3,40 +3,55 @@ import os.path as osp
 import PIL.Image as PImage
 from torchvision.datasets.folder import DatasetFolder, IMG_EXTENSIONS
 from torchvision.transforms import InterpolationMode, transforms
+from torch.utils.data import Dataset
+import os
 
+class CustomImageDataset(Dataset):
+    def __init__(self, root, name="Training", transform=None):
+        self.img_dir = osp.join(root, name+"_Input")
+        self.mask_dir = osp.join(root, name+"_GroundTruth")
+
+        self.image_files = sorted([f for f in os.listdir(self.img_dir) if f.endswith(('.png', '.jpg', '.jpeg'))])
+        self.mask_files = sorted([f for f in os.listdir(self.mask_dir) if f.endswith(('.png', '.jpg', '.jpeg'))])
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = osp.join(self.img_dir, self.image_files[idx])
+        mask_path = osp.join(self.mask_dir, self.mask_files[idx])
+        image = PImage.open(img_path).convert("RGB")  # Convert to grayscale
+        mask = PImage.open(mask_path).convert("L")
+        if self.transform:
+            image = self.transform(image)
+            mask = self.transform(mask)
+        return image, mask
 
 def normalize_01_into_pm1(x):  # normalize x from [0, 1] to [-1, 1] by (x*2) - 1
     return x.add(x).add_(-1)
 
 
-def build_dataset(
-    data_path: str, final_reso: int,
-    hflip=False, mid_reso=1.125,
-):
+def build_dataset(data_path: str, final_reso: int):
     # build augmentations
-    mid_reso = round(mid_reso * final_reso)  # first resize to mid_reso, then crop to final_reso
-    train_aug, val_aug = [
-        transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS), # transforms.Resize: resize the shorter edge to mid_reso
-        transforms.RandomCrop((final_reso, final_reso)),
-        transforms.ToTensor(), normalize_01_into_pm1,
-    ], [
-        transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS), # transforms.Resize: resize the shorter edge to mid_reso
-        transforms.CenterCrop((final_reso, final_reso)),
-        transforms.ToTensor(), normalize_01_into_pm1,
-    ]
-    if hflip: train_aug.insert(0, transforms.RandomHorizontalFlip())
-    train_aug, val_aug = transforms.Compose(train_aug), transforms.Compose(val_aug)
+    train_aug = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor()
+    ])
+    val_aug = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor()
+    ])
     
     # build dataset
-    train_set = DatasetFolder(root=osp.join(data_path, 'train'), loader=pil_loader, extensions=IMG_EXTENSIONS, transform=train_aug)
-    val_set = DatasetFolder(root=osp.join(data_path, 'val'), loader=pil_loader, extensions=IMG_EXTENSIONS, transform=val_aug)
-    num_classes = 1000
-    print(f'[Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')
+    train_set = CustomImageDataset(root=data_path, name="Training", transform=train_aug)
+    val_set = CustomImageDataset(root=data_path, name="Validation", transform=val_aug)
+    
+    print(f'[Dataset] {len(train_set)=}, {len(val_set)=}')
     print_aug(train_aug, '[train]')
     print_aug(val_aug, '[val]')
     
-    return num_classes, train_set, val_set
-
+    return train_set, val_set
 
 def pil_loader(path):
     with open(path, 'rb') as f:

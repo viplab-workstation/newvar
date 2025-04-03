@@ -23,7 +23,7 @@ import dist
 
 
 class Args(Tap):
-    data_path: str = '/path/to/imagenet'
+    data_path: str = "/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/"
     exp_name: str = 'text'
     
     # VAE
@@ -45,12 +45,12 @@ class Args(Tap):
     tclip: float = 2.       # <=0 for not using grad clip
     ls: float = 0.0         # label smooth
     
-    bs: int = 768           # global batch size
+    bs: int = 32           # global batch size
     batch_size: int = 0     # [automatically set; don't specify this] batch size per GPU = round(args.bs / args.ac / dist.get_world_size() / 8) * 8
     glb_batch_size: int = 0 # [automatically set; don't specify this] global batch size = args.batch_size * dist.get_world_size()
     ac: int = 1             # gradient accumulation
     
-    ep: int = 250
+    ep: int = 100
     wp: float = 0
     wp0: float = 0.005      # initial lr ratio at the begging of lr warm up
     wpe: float = 0.01       # final lr ratio at the end of training
@@ -76,9 +76,9 @@ class Args(Tap):
     workers: int = 0        # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
     
     # progressive training
-    pg: float = 0.0         # >0 for use progressive training during [0%, this] of training
-    pg0: int = 4            # progressive initial stage, 0: from the 1st token map, 1: from the 2nd token map, etc
-    pgwp: float = 0         # num of warmup epochs at each progressive stage
+    pg: float = 0.5         # >0 for use progressive training during [0%, this] of training
+    pg0: int = 1            # progressive initial stage, 0: from the 1st token map, 1: from the 2nd token map, etc
+    pgwp: float = 0.1         # num of warmup epochs at each progressive stage
     
     # would be automatically set in runtime
     cmd: str = ' '.join(sys.argv[1:])  # [automatically set; don't specify this]

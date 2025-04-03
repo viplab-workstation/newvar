@@ -35,9 +35,10 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
     
 class PerceptualLoss(nn.Module):
-    def __init__(self, layer_idx=2, device="cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, layer_idx=2, device="cuda" if torch.cuda.is_available() else "cpu", task="mask"):
         super(PerceptualLoss, self).__init__()
         self.device = device
+        self.task = task
         vgg = models.vgg16(pretrained=True).features[:layer_idx+1].to(device)  # Move model to device
         self.feature_extractor = nn.Sequential(*list(vgg)).eval()
         for param in self.feature_extractor.parameters():
@@ -49,8 +50,9 @@ class PerceptualLoss(nn.Module):
         pred, target = pred.to(self.device), target.to(self.device)
 
         # Convert single-channel (grayscale) images to 3-channel format for VGG
-        pred = pred.repeat(1, 3, 1, 1)  
-        target = target.repeat(1, 3, 1, 1)
+        if self.task=="mask":
+            pred = pred.repeat(1, 3, 1, 1)  
+            target = target.repeat(1, 3, 1, 1)
 
         pred_features = self.feature_extractor(pred)
         target_features = self.feature_extractor(target)

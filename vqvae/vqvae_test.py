@@ -45,9 +45,11 @@ def test_vqvae(vqvae, model_path, test_loader, indices=None):
                 selected_images.append((original, reconstructed))
                 if len(selected_images) == len(indices): break
     
-    if indices: print(metrics/len(indices))
-    else: print(metrics/len(test_loader))
-    display_results(selected_images, save_path="results2.png")
+    if indices: 
+        print(metrics/len(indices))
+        display_results(selected_images, save_path="results4.png")
+    else: 
+        print(metrics/len(test_loader))
 
 # Main script
 if __name__ == "__main__":
@@ -62,5 +64,6 @@ if __name__ == "__main__":
 
     # Set indices of test images to evaluate (or None for sequential images)
     test_indices = [0, 5, 10, 18, 20, 25, 30, 40]
-    vqvae = VQVAE(in_channels=3, vocab_size=8192, z_channels=64, ch=128, test_mode=False)
-    test_vqvae(vqvae, "./checkpoints/img_new_best.pth", test_loader, indices=test_indices)
+    vqvae = VQVAE(in_channels=3, vocab_size=1024, z_channels=64, ch=160, test_mode=False)
+    # vqvae = VQVAE(in_channels=3, vocab_size=8192, z_channels=64, ch=128, test_mode=False)
+    test_vqvae(vqvae, "./checkpoints/vqvae_best.pth", test_loader, indices=None)

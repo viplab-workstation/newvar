@@ -25,7 +25,7 @@ def build_vae_var(
         setattr(clz, 'reset_parameters', lambda self: None)
     
     # build models
-    vae_local_img = VQVAE(in_channels=3 ,vocab_size=V, z_channels=Cvae, ch=ch, test_mode=True, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
+    vae_local_img = VQVAE(in_channels=3 ,vocab_size=1024, z_channels=Cvae, ch=160, test_mode=True, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
     vae_local_mask = VQVAE(in_channels=1 ,vocab_size=V, z_channels=Cvae, ch=ch, test_mode=True, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
     var_wo_ddp = VAR(
         vae_local_mask = vae_local_mask, vae_local_img = vae_local_img,
@@ -35,7 +35,6 @@ def build_vae_var(
         patch_nums=patch_nums,
         flash_if_available=flash_if_available, fused_if_available=fused_if_available,
     ).to(device)
-    # var_wo_ddp.init_weights(init_adaln=init_adaln, init_adaln_gamma=init_adaln_gamma, init_head=init_head, init_std=init_std)
+    var_wo_ddp.init_weights(init_adaln=init_adaln, init_adaln_gamma=init_adaln_gamma, init_head=init_head, init_std=init_std)
     
     return vae_local_img, vae_local_mask, var_wo_ddp
-

@@ -33,9 +33,10 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
     
     if task == "image":
         l1loss = nn.L1Loss()
+        perceptual_loss = PerceptualLoss(task="image")
     elif task == "mask":
         dice_loss = DiceLoss()
-        perceptual_loss = PerceptualLoss()
+        perceptual_loss = PerceptualLoss(task="mask")
         
     writer = SummaryWriter()
     os.makedirs(save_path, exist_ok=True)  # Ensure checkpoint directory exists
@@ -51,8 +52,8 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
 
             rec_img, _, vq_loss = vqvae(img)
 
-            if task == "image": loss = l1loss(rec_img, img) + 0.5 * vq_loss
-            else: loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img) + 0.5 * vq_loss
+            if task == "image": loss = l1loss(rec_img, img) + 0.5 * perceptual_loss(rec_img, img) + 0.1 * vq_loss
+            else: loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img) + 0.1 * vq_loss
 
             loss.backward()
             optimizer.step()
@@ -71,7 +72,7 @@ def train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", sa
                 img = img.to(device)
                 rec_img, _, _ = vqvae(img)
 
-                if task == "image": loss = l1loss(rec_img, img)
+                if task == "image": loss = l1loss(rec_img, img) + 0.5 * perceptual_loss(rec_img, img)
                 else: loss = dice_loss(rec_img, img) + perceptual_loss(rec_img, img)
 
                 val_loss += loss.item()
@@ -107,14 +108,14 @@ if __name__ == "__main__":
         transforms.ToTensor()
     ])
 
-    train_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Training_Input/", task="image", transform=transform)
-    val_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Validation_Input/", task="image", transform=transform)
+    train_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Training_GroundTruth/", task="mask", transform=transform)
+    val_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Validation_GroundTruth/", task="mask", transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
 
     #4096model : vocab_size=4096, z_channels=32, loss : dice + focal + vq
     #8192model : vocab_size=8192, z_channels=64, loss : dice + perceptual + 0.5*vq
-    vqvae = VQVAE(in_channels=3, vocab_size=8192, z_channels=64, ch=128, test_mode=False)
-    vqvae.load_state_dict(torch.load("checkpoints/img_new_best.pth"))
-    train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="image", save_path="./checkpoints")
+    vqvae = VQVAE(in_channels=1, vocab_size=256, z_channels=64, ch=160, test_mode=False)
+    # vqvae.load_state_dict(torch.load("checkpoints/img_new_best.pth"))
+    train_vqvae(vqvae, train_loader, val_loader, num_epochs=50, task="mask", save_path="./checkpoints")
