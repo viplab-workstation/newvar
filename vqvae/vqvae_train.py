@@ -111,8 +111,8 @@ if __name__ == "__main__":
     train_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Training_GroundTruth/", task="mask", transform=transform)
     val_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Validation_GroundTruth/", task="mask", transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
 
     #4096model : vocab_size=4096, z_channels=32, loss : dice + focal + vq
     #8192model : vocab_size=8192, z_channels=64, loss : dice + perceptual + 0.5*vq

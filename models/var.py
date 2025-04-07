@@ -158,7 +158,7 @@ class VAR(nn.Module):
             
             x = next_token_map
             it = self.word_embed_img(self.vae_quant_proxy_img[0].embedding(img_tokens[si]))
-            if(len(img_tokens[si][0]) <= 20):print("image:",img_tokens[si][0])
+            if(len(img_tokens[si][0]) <= 10):print("image:",img_tokens[si][0])
             AdaLNCrossAttn.forward
             for b in self.blocks:
                 x = b(f_d=x, f_var=it, attn_bias=None)
@@ -166,7 +166,7 @@ class VAR(nn.Module):
             
             # idx_Bl = sample_with_top_k_top_p_(logits_BlV, rng=rng, top_k=top_k, top_p=top_p, num_samples=1)[:, :, 0]
             idx_Bl = logits_BlV.argmax(dim=-1) # making prediction deterministic instead of one from top k
-            if(len(idx_Bl[0]) <= 20): print("mask:",idx_Bl[0])
+            if(len(idx_Bl[0]) <= 10): print("mask:",idx_Bl[0])
 
             if not more_smooth: # this is the default case
                 h_BChw = self.vae_quant_proxy_mask[0].embedding(idx_Bl)   # B, l, Cvae

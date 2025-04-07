@@ -8,6 +8,7 @@ sys.path.append("../")
 from models import VQVAE, build_vae_var
 from var_utils import multiclass_metrics, build_dataset
 from var_test import test_var
+from vqvector.plots import get_weights2
 
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -31,7 +32,8 @@ def train_var(var, vae_img, vae_mask, train_loader, val_loader, num_epochs=50, s
     var.train()
 
     optimizer = optim.Adam(var.parameters(), lr=1e-4)
-    criterion = nn.CrossEntropyLoss()
+    class_weights = get_weights2("/home/viplab/SuperRes/newvar/vqvector/hist_counts.npz").to(device)
+    criterion = nn.CrossEntropyLoss(weight = class_weights)
         
     writer = SummaryWriter()
     os.makedirs(save_path, exist_ok=True)  # Ensure checkpoint directory exists
@@ -60,6 +62,8 @@ def train_var(var, vae_img, vae_mask, train_loader, val_loader, num_epochs=50, s
 
             total_loss += loss.item()
             total_score += multiclass_metrics(gt_BL.detach().cpu(), logits_BLV.argmax(dim=-1).detach().cpu(), num_classes=V, all_metrics=False)
+
+            # break #TO BE REMOVED
 
         writer.add_scalar("Loss/Train", total_loss / len(train_loader), epoch)
         writer.add_scalar("Accuracy/Train", total_score / len(train_loader), epoch)
@@ -95,7 +99,7 @@ def train_var(var, vae_img, vae_mask, train_loader, val_loader, num_epochs=50, s
             torch.save(var.state_dict(), os.path.join(save_path, "var_best.pth"))
 
         if epoch % 1 == 0:  # Log every 1 epochs
-            test_var(var, val_loader, indices=[0,1,5,10,18,20,25,30])
+            test_var(var, val_loader, indices=[0,1,2,3,4,5,6,7,8])
 
         print(f"Epoch {epoch+1}, Train Loss: {total_loss/len(train_loader):.4f}, Accuracy: {total_score/len(train_loader):.4f}, "
               f"Val Loss: {avg_val_loss:.4f}, Val accuracy: {val_score/len(val_loader):.4f}")
@@ -110,21 +114,22 @@ if __name__ == "__main__":
 
     train_dataset, val_dataset = build_dataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/")
 
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
-
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+# Done, can i use??okok
     vae_img, vae_mask, var = build_vae_var(
-        V=8192, Cvae=64, ch=128, share_quant_resi=4,
+        V=256, Cvae=64, ch=160, share_quant_resi=4,
         device=device, patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
         depth=16, shared_aln=False,
         flash_if_available=True, fused_if_available=True,
         init_adaln=0.5, init_adaln_gamma=1e-5, init_head=0.02, init_std=-1,
     )
 
-    vae_img_ckpt = "/home/viplab/SuperRes/newvar/vqvae/checkpoints/vqvae_best.pth"
+    vae_img_ckpt = "/home/viplab/SuperRes/newvar/vqvae/checkpoints/img_best.pth"
     vae_mask_ckpt = "/home/viplab/SuperRes/newvar/vqvae/checkpoints/mask_best.pth"
     vae_mask.load_state_dict(torch.load(vae_mask_ckpt, map_location=device), strict=True)
     vae_img.load_state_dict(torch.load(vae_img_ckpt, map_location=device), strict=True)
+    # var.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/var/checkpoints/1ep.pth", map_location=device))
     
     # Ensure vae_img and vae_mask are NOT trained
     vae_img.to(device).eval()

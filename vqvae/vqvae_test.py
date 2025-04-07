@@ -27,7 +27,7 @@ def test_vqvae(vqvae, model_path, test_loader, indices=None):
     vqvae.load_state_dict(torch.load(model_path, map_location=device))
     vqvae.eval()
 
-    metrics = np.zeros(shape=(2,))# 2 or 6
+    metrics = np.zeros(shape=(6,))# 2 or 6
     selected_images = []
     
     with torch.no_grad():
@@ -37,7 +37,8 @@ def test_vqvae(vqvae, model_path, test_loader, indices=None):
             img = img.to(device)
             rec_img, _, _ = vqvae(img)
             
-            metrics += score(rec_img.detach().cpu().numpy(), img.detach().cpu().numpy(), True)
+            try:metrics += score(rec_img.detach().cpu().numpy(), img.detach().cpu().numpy(), True)
+            except Exception as e: print(i, ":", e)
 
             if indices:
                 original = transforms.ToPILImage()(img.squeeze(0).cpu())
@@ -47,7 +48,7 @@ def test_vqvae(vqvae, model_path, test_loader, indices=None):
     
     if indices: 
         print(metrics/len(indices))
-        display_results(selected_images, save_path="results4.png")
+        display_results(selected_images, save_path="results1.png")
     else: 
         print(metrics/len(test_loader))
 
@@ -58,12 +59,12 @@ if __name__ == "__main__":
         transforms.ToTensor()
     ])
 
-    test_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Test_Input/", task="image", transform=transform)
-    # test_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Test_GroundTruth/", task="mask", transform=transform)
+    # test_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Test_Input/", task="image", transform=transform)
+    test_dataset = SingleImageDataset("/media/viplab/DATADRIVE1/skin_lesion/ISIC2018/Test_GroundTruth/", task="mask", transform=transform)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)  # Load one image at a time
 
     # Set indices of test images to evaluate (or None for sequential images)
     test_indices = [0, 5, 10, 18, 20, 25, 30, 40]
-    vqvae = VQVAE(in_channels=3, vocab_size=1024, z_channels=64, ch=160, test_mode=False)
-    # vqvae = VQVAE(in_channels=3, vocab_size=8192, z_channels=64, ch=128, test_mode=False)
-    test_vqvae(vqvae, "./checkpoints/vqvae_best.pth", test_loader, indices=None)
+    # vqvae = VQVAE(in_channels=3, vocab_size=1024, z_channels=64, ch=160, test_mode=False)
+    vqvae = VQVAE(in_channels=1, vocab_size=256, z_channels=64, ch=160, test_mode=False)
+    test_vqvae(vqvae, "./checkpoints/mask_best.pth", test_loader, indices=test_indices)

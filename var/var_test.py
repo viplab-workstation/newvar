@@ -38,8 +38,11 @@ def test_var(var, test_loader, indices=None, vae_mask=None):
                 for i in range(5): print(lst[i])
                 
             if indices:
-                original = transforms.ToPILImage()(img.squeeze(0).cpu())
-                reconstructed = transforms.ToPILImage()(rec_img.squeeze(0).cpu())
+                # print(img.shape)
+                # original = transforms.ToPILImage()(img.squeeze(0).cpu())
+                # reconstructed = transforms.ToPILImage()(rec_img.squeeze(0).cpu())
+                original = transforms.ToPILImage()(img[0].cpu())
+                reconstructed = transforms.ToPILImage()(rec_img[0].cpu())
                 selected_images.append((original, reconstructed))
                 if len(selected_images) == len(indices): break
 
@@ -60,11 +63,11 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     vae_img, vae_mask, var = build_vae_var(
-        V=8192, Cvae=64, ch=128, share_quant_resi=4,    # hard-coded VQVAE hyperparameters
+        V=256, Cvae=64, ch=160, share_quant_resi=4,    # hard-coded VQVAE hyperparameters
         device=device, patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
         depth=16, shared_aln=False,
     )
-    vae_img.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/vqvae_best.pth", map_location=device))
+    vae_img.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/img_best.pth", map_location=device))
     vae_mask.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/vqvae/checkpoints/mask_best.pth", map_location=device))
     var.load_state_dict(torch.load("/home/viplab/SuperRes/newvar/var/checkpoints/var_best.pth", map_location=device))
 
